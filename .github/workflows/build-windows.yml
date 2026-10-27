@@ -19,19 +19,27 @@ jobs:
           python-version: "3.12"
 
       - name: Install PyInstaller
-        run: python -m pip install --upgrade pip pyinstaller==6.11.1
+        run: python -m pip install --upgrade pip pyinstaller==6.11.1 pystray==0.19.5 pillow==11.0.0
 
       - name: Build LayarHDMIAgent.exe
         run: >
-          pyinstaller --onefile --console --clean
+          pyinstaller --onefile --windowed --clean
           --name LayarHDMIAgent
           --icon icon.ico
           --version-file version_info.txt
+          --add-data "icon.png;."
           --hidden-import layar_agent_windows
+          --hidden-import layar_agent_gui
+          --hidden-import pystray._win32
           layar_agent.py
 
       - name: Smoke test
-        run: dist\LayarHDMIAgent.exe --help
+        shell: pwsh
+        run: |
+          # A windowed exe returns at once; wait for it and check the exit code.
+          $p = Start-Process dist\LayarHDMIAgent.exe -ArgumentList "--self-test" -Wait -PassThru
+          "self-test exit code: $($p.ExitCode)"
+          if ($p.ExitCode -ne 0) { exit 1 }
 
       - name: Package
         shell: pwsh

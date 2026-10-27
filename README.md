@@ -10,10 +10,13 @@ Works on **Linux** and **Windows 10/11**. macOS is not supported yet.
 
 **Easiest:** download `LayarHDMIAgent.exe` from the
 [latest release](https://github.com/joearton/layar-hdmi-agent/releases/latest)
-and double-click it. Windows may show "Windows protected your PC" because the
+and double-click it. A small window shows the PIN, the connection status and
+the monitor that receives touches (you can change it there). Closing the
+window keeps the agent running in the system tray; right-click the tray icon
+and choose **Quit** to stop it. Windows may show "Windows protected your PC" because the
 file is not code-signed yet: click **More info → Run anyway**. Allow access on
 private networks when the firewall asks. To pick another monitor, run
-`LayarHDMIAgent.exe --output 2` from a terminal.
+`LayarHDMIAgent.exe --output 2`, or pick it in the window.
 
 **From source:**
 
@@ -48,6 +51,13 @@ limited to that monitor.
   ```sh
   sudo ufw allow from 192.168.0.0/16 to any port 47800 proto tcp
   ```
+
+## Status window and tray
+
+The agent opens a small status window when a desktop is available (it needs
+tkinter: `sudo apt install python3-tk` on Debian/Ubuntu/Pop!_OS). A tray icon
+appears when `pystray` is installed (`pip install pystray pillow`) and the
+desktop supports one. Use `--no-gui` to run in the terminal only.
 
 ## Run (Linux)
 

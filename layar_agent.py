@@ -185,7 +185,7 @@ def pick_output(outputs, wanted):
         for o in outputs:
             if o[0] == wanted:
                 return o
-        sys.exit(f"Output {wanted!r} not found. Available: {', '.join(o[0] for o in outputs) or 'none'}")
+        raise AgentError(f"Output {wanted!r} not found. Available: {', '.join(o[0] for o in outputs) or 'none'}")
     for o in outputs:
         if CAPTURE_HINTS.search(f"{o[1]} {o[2]}"):
             return o
@@ -215,12 +215,17 @@ def map_touch_to_output_cosmic(output_name):
         f.write(new)
 
 
+class AgentError(Exception):
+    """A problem the user has to fix (shown in the window, or printed)."""
+
+
 # --- pairing PIN --------------------------------------------------------------------
 
-def load_pin():
+def load_pin(new=False):
+    """The saved 6-digit PIN; a fresh one when there is none or [new] is set."""
     os.makedirs(CONFIG_DIR, exist_ok=True)
     path = os.path.join(CONFIG_DIR, "pin")
-    if os.path.exists(path):
+    if os.path.exists(path) and not new:
         with open(path) as f:
             pin = f.read().strip()
         if re.fullmatch(r"\d{6}", pin):
@@ -238,6 +243,8 @@ class Agent:
         self.touch = touch
         self.pin = pin
         self.output_name = output_name
+        # Called from the network thread: ("connected" | "disconnected" | "wrong_pin", peer IP).
+        self.on_event = lambda kind, detail: None
         self.client = None
 
     async def handle(self, reader, writer):
@@ -258,6 +265,7 @@ class Agent:
                         writer.write(b'{"t":"error","msg":"Wrong PIN"}\n')
                         await writer.drain()
                         print(f"[agent] wrong PIN from {peer[0]}")
+                        self.on_event("wrong_pin", peer[0])
                         await asyncio.sleep(1)  # slow down guessing
                         break
                     authed = True
@@ -268,6 +276,7 @@ class Agent:
                         self.touch.release_all()
                     self.client = writer
                     print(f"[agent] phone connected from {peer[0]}")
+                    self.on_event("connected", peer[0])
                     welcome = {"t": "welcome", "name": socket.gethostname(), "output": self.output_name}
                     writer.write((json.dumps(welcome) + "\n").encode())
                     await writer.drain()
@@ -285,6 +294,7 @@ class Agent:
                 self.touch.release_all()
                 self.client = None
                 print(f"[agent] phone {peer[0]} disconnected")
+                self.on_event("disconnected", peer[0])
             writer.close()
 
 
@@ -331,7 +341,7 @@ def open_linux(args):
     try:
         touch = TouchScreen(width_mm, height_mm)
     except PermissionError:
-        sys.exit("No write access to /dev/uinput. See README.md (udev rule) and log in again.")
+        raise AgentError("No write access to /dev/uinput. See README.md (udev rule) and log in again.")
     if out and not args.no_map and outputs:
         map_touch_to_output_cosmic(out[0])
         print(f"[agent] touch mapped to {out[0]} ({out[1]} {out[2]}) via COSMIC config")
@@ -348,40 +358,94 @@ def open_windows(args):
         print(f"[agent] monitor {i}: {m.label()}")
     mon = win.pick_monitor(monitors, args.output, CAPTURE_HINTS)
     if mon is None:
-        sys.exit("Could not tell which monitor is the capture card. Run again with --output N "
-                 "(the monitor number above).")
+        raise AgentError("Could not tell which monitor is the capture card. Run again with --output N "
+                         "(the monitor number above).")
     print(f"[agent] touches go to monitor {mon.label()}")
     return win.TouchInjector(mon), mon.name
 
 
-async def main():
+def parse_args():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--output", help="monitor the capture card is plugged into: a name like HDMI-A-2 (Linux) "
                                      "or a monitor number from the list (Windows); auto-detected when possible")
     ap.add_argument("--no-map", action="store_true", help="Linux: don't touch the desktop's input-mapping config")
-    args = ap.parse_args()
+    ap.add_argument("--no-gui", action="store_true", help="run in the terminal without the status window")
+    ap.add_argument("--self-test", action="store_true", help=argparse.SUPPRESS)  # CI: imports and monitor list
+    return ap.parse_args()
 
-    touch, output_name = open_windows(args) if WINDOWS else open_linux(args)
 
-    pin = load_pin()
-    server = await asyncio.start_server(Agent(touch, pin, output_name).handle, "0.0.0.0", PORT)
-    print(f"[agent] listening on port {PORT}.  PIN: {pin}")
+def open_touch(args):
+    return open_windows(args) if WINDOWS else open_linux(args)
+
+
+async def serve(agent):
+    """Accept phones and announce this PC until cancelled."""
     try:
+        server = await asyncio.start_server(agent.handle, "0.0.0.0", PORT)
+    except OSError as e:
+        raise AgentError(f"Port {PORT} is busy; is the agent already running? ({e.strerror})") from e
+    print(f"[agent] listening on port {PORT}.  PIN: {agent.pin}")
+    async with server:
         await asyncio.gather(server.serve_forever(), beacon(socket.gethostname()))
+
+
+def local_ip():
+    """This PC's LAN address (the one the default route uses), for typing into the phone."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("192.0.2.1", 9))  # no packet is sent for UDP connect
+            return s.getsockname()[0]
+    except OSError:
+        return None
+
+
+def run_console(args):
+    touch, output_name = open_touch(args)
+    try:
+        asyncio.run(serve(Agent(touch, load_pin(), output_name)))
     finally:
         touch.close()
 
 
-if __name__ == "__main__":
-    # Double-clicked LayarHDMIAgent.exe: keep the window open so errors can be read.
-    keep_open = WINDOWS and getattr(sys, "frozen", False) and "--help" not in sys.argv
+def gui_available():
+    if not WINDOWS and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        return False
     try:
-        asyncio.run(main())
+        import tkinter  # noqa: F401  (python3-tk may be missing on Linux)
+        return True
+    except ImportError:
+        return False
+
+
+def self_test():
+    """Exit 0 when the bundled modules load and (on Windows) monitors can be listed."""
+    import layar_agent_gui  # noqa: F401
+    if WINDOWS:
+        import layar_agent_windows as win
+        import pystray  # noqa: F401
+        from PIL import Image  # noqa: F401
+        if not win.monitors():
+            sys.exit(2)
+    sys.exit(0)
+
+
+def main():
+    args = parse_args()
+    if args.self_test:
+        self_test()
+    if not args.no_gui and gui_available():
+        import layar_agent_gui
+        layar_agent_gui.run(args)
+        return
+    try:
+        run_console(args)
+    except AgentError as e:
+        print(f"[agent] {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    try:
+        main()
     except KeyboardInterrupt:
         pass
-    except SystemExit as e:
-        if keep_open and e.code not in (None, 0):
-            print(e.code if isinstance(e.code, str) else f"[agent] stopped (exit {e.code})")
-            input("Press Enter to close...")
-            raise SystemExit(1)
-        raise

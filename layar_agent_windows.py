@@ -252,6 +252,12 @@ class TouchInjector:
                 self.contacts.clear()
                 self.primary = None
 
+    def set_monitor(self, monitor):
+        """Send touches to another monitor; fingers that are down are lifted first."""
+        self.release_all()
+        with self.lock:
+            self.mon = monitor
+
     def update(self, pointers):
         with self.lock:
             infos = []
