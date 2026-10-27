@@ -12,6 +12,7 @@ import queue
 import sys
 import threading
 import tkinter as tk
+import webbrowser
 from tkinter import messagebox
 
 import layar_agent as core
@@ -119,6 +120,7 @@ class AgentWindow:
         self._button(buttons, "Quit", self.quit).pack(side="right")
         self.hide_button = self._button(buttons, "Hide to tray", self.hide)
         self._button(buttons, "New PIN", self.new_pin).pack(side="left")
+        self._button(buttons, "About", self.about).pack(side="left", padx=(8, 0))
 
         self.footer = self._label(
             self.root, "Keep the agent running while you use touch control.", 8, MUTED, wraplength=360, justify="left",
@@ -214,6 +216,34 @@ class AgentWindow:
             return
         self.agent.pin = core.load_pin(new=True)
         self.pin_label.configure(text=self.agent.pin)
+
+    def about(self):
+        win = tk.Toplevel(self.root, bg=GROUND)
+        win.title("About Layar HDMI Agent")
+        win.resizable(False, False)
+        win.transient(self.root)
+        body = tk.Frame(win, bg=GROUND)
+        body.pack(padx=24, pady=20)
+        self._label(body, "Layar HDMI Agent", 14, weight="bold").pack(anchor="w")
+        self._label(body, f"Version {core.VERSION}", 9, MUTED, MONO).pack(anchor="w", pady=(0, 10))
+        self._label(
+            body,
+            "Lets the Layar HDMI app on your phone or tablet control this PC by touch. "
+            "Only touches travel over your local network; the picture comes through HDMI.",
+            10, TEXT, wraplength=340, justify="left",
+        ).pack(anchor="w")
+        self._label(body, "DEVELOPER", 8, MUTED, MONO).pack(anchor="w", pady=(14, 0))
+        self._label(body, "Artonlabs", 10).pack(anchor="w")
+        for text, url in (
+            ("www.artonlabs.com", "https://www.artonlabs.com"),
+            ("Layar HDMI", "https://www.artonlabs.com/layar"),
+        ):
+            link = self._label(body, text, 10, ACCENT, cursor="hand2")
+            link.pack(anchor="w")
+            link.bind("<Button-1>", lambda _e, u=url: webbrowser.open(u))
+        self._label(body, "Open source under the MIT License.", 9, MUTED).pack(anchor="w", pady=(14, 0))
+        self._button(body, "Close", win.destroy).pack(anchor="e", pady=(16, 0))
+        win.grab_set()
 
     # ---- tray ----------------------------------------------------------------------------
 

@@ -36,6 +36,7 @@ WINDOWS = sys.platform == "win32"
 if not WINDOWS:
     import fcntl
 
+VERSION = "1.1.1"
 PORT = 47800
 BEACON_PORT = 47801
 DEVICE_NAME = "Layar HDMI Touch"
