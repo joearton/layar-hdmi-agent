@@ -1,0 +1,62 @@
+name: Build Windows agent
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyInstaller
+        run: python -m pip install --upgrade pip pyinstaller==6.11.1
+
+      - name: Build LayarHDMIAgent.exe
+        run: >
+          pyinstaller --onefile --console --clean
+          --name LayarHDMIAgent
+          --icon icon.ico
+          --version-file version_info.txt
+          --hidden-import layar_agent_windows
+          layar_agent.py
+
+      - name: Smoke test
+        run: dist\LayarHDMIAgent.exe --help
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item dist\LayarHDMIAgent.exe out\
+          Copy-Item README.md, LICENSE out\
+          Compress-Archive -Path out\* -DestinationPath LayarHDMIAgent-windows.zip
+          (Get-FileHash dist\LayarHDMIAgent.exe -Algorithm SHA256).Hash.ToLower() + "  LayarHDMIAgent.exe" | Out-File -Encoding ascii SHA256SUMS.txt
+          (Get-FileHash LayarHDMIAgent-windows.zip -Algorithm SHA256).Hash.ToLower() + "  LayarHDMIAgent-windows.zip" | Out-File -Encoding ascii -Append SHA256SUMS.txt
+          Get-Content SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LayarHDMIAgent-windows
+          path: |
+            dist/LayarHDMIAgent.exe
+            LayarHDMIAgent-windows.zip
+            SHA256SUMS.txt
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/LayarHDMIAgent.exe
+            LayarHDMIAgent-windows.zip
+            SHA256SUMS.txt
